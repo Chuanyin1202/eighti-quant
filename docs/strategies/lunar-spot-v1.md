@@ -141,8 +141,8 @@ TheoreticalUSD = DeltaWeight × TotalEquity
 
 當 `OrderUSD < 0`（SELL）但 `FloatAsset × LivePrice < |OrderUSD|`：
 1. 從 `Lots` 篩 `Type=DEAD AND !IsColdSealed`，FIFO 累積到補足缺口
-2. 產出 `ReleaseIntent { Kind: "hard_release", Slices: [...], RelatedClientOrderID: <SELL command 的 client_order_id> }`
-3. 外圈在原子事務內執行 lot 轉換
+2. 產出 `ReleaseIntent { Kind: "hard_release", Slices: [...], RelatedIntentIndex: <對應 SELL TradeIntent 在 Intents 中的 index> }`
+3. 外圈 Phase C 在原子事務內：先把 Intents 翻譯為 TradeCommand 並生成 client_order_id（建立 index → client_order_id 對照表），再用對照表把 release 的 RelatedIntentIndex 解析為實際的 client_order_id 寫入 audit log，最後執行 lot 轉換
 
 ---
 
@@ -237,13 +237,13 @@ ReleaseIntent {
     Kind: "soft_release",
     Slices: [{LotID, Qty}, ...],
     TotalQtyAsset: 累計,
-    RelatedClientOrderID: ""   // soft release 不對應 SELL
+    RelatedIntentIndex: -1   // soft release 不對應 SELL
 }
 ```
 
 ### 8.2 硬釋放（Hard Release）
 
-見 §6.4。`Kind: "hard_release"`，`RelatedClientOrderID` 必填（配對 SELL TradeIntent 的 client_order_id）。
+見 §6.4。`Kind: "hard_release"`，`RelatedIntentIndex` 必填（指向 SELL TradeIntent 在 `StrategyOutput.Intents` 中的 index）。外圈 Phase C 翻譯時會把此 index 對應的 `TradeIntent` 生成的 `client_order_id` 回填到 release 紀錄，供日後 cancellation compensation 配對 rollback。
 
 ### 8.3 鐵律
 - `IsColdSealed=true` 任何情況不釋放
@@ -353,7 +353,10 @@ func (s *Strategy) Step(in strategy.StrategyInput, p strategy.Params) strategy.S
 
     // 6. 底倉釋放
     softRelease := release.MaybeSoftRelease(in.Portfolio.Lots, currentMicroWeight, chromo, in.LatestBarTimeMs)
-    hardRelease := release.MaybeHardRelease(microIntent, in.Portfolio, microIntent.ClientOrderID)  // 配對 SELL
+    // 硬釋放：配對的是 microIntent 在 Intents 陣列中的 index（0-based）
+    // 外圈 Phase C 翻譯 Intents → TradeCommand 時生成 client_order_id 並回填到 release 紀錄
+    microIntentIndex := len(macroIntent)  // 假設 micro append 在 macro 之後
+    hardRelease := release.MaybeHardRelease(microIntent, in.Portfolio, microIntentIndex)
 
     // 7. 全局止損熔斷
     if totalEquity <= chromo.SpawnPoint.Policy.InitialCapitalUSDT * (1 - chromo.SpawnPoint.Risk.GlobalStopLossPct) {

@@ -36,19 +36,27 @@ strategy.Manifest{
 每格訂單金額 = OrderUSDT
 ```
 
-### 2.2 觸發規則
+### 2.2 觸發規則（close-only 模式的明示限制）
+
+策略 `RequiredDataKind = "close-only"`，意味著只用 bar close 判穿越：
 
 ```
-ClosePrev = closes[len-2]
-ClosePrev = closes[len-1]   // 即 in.LivePrice 對應的 bar close
+ClosePrev = closes[len-2]   // 上一根完成 bar 的 close
+CloseNow  = closes[len-1]   // 當前完成 bar 的 close
 
 對每條網格線 G:
-  - ClosePrev > G AND ClosePrev <= G  → 下穿觸發 BUY
-  - ClosePrev < G AND ClosePrev >= G  → 上穿觸發 SELL
+  - ClosePrev > G AND CloseNow <= G  → 下穿觸發 BUY
+  - ClosePrev < G AND CloseNow >= G  → 上穿觸發 SELL
   - 其他情況 → 不觸發
 ```
 
-每根 bar 最多觸發一次（同 bar 不重複，同 §Step 第 6 步幂等檢查）。
+**Close-only 觸發語義的 3 條限制（明示文件，不視為 bug）：**
+
+1. **bar 內 wick 觸發不算**：bar 內 high 穿過網格線但 close 又退回，不觸發。真實 grid 用戶可能期望這算觸發 → 用戶要實精確 intrabar 觸發應改用未來的 `ohlcv` 變體（規劃中，當前 framework 不支援）。
+2. **跳空多格收斂為 N 條訊號（每條獨立計算）**：bar close 一次穿越多條網格線時，每條都觸發一次。配合 §2.4 oversell 防護，總量受 FloatAsset 限制。
+3. **同 bar 不重複**：cron tick 內同 bar 多次跑 Step() 會被外圈 idempotent guard 攔下（見 §00-架構總覽.md §6.2 Phase A）。
+
+**不可避免的 fitness vs live 偏差**：GA backtest 跑歷史 closes 的觸發時點會跟 live 在同一根 bar 內某瞬間穿過、close 又退回的情境有差。此偏差是「**close-only 模式的代價**」，已寫進 Manifest 讓用戶知道。
 
 ### 2.3 區間外行為
 
@@ -56,6 +64,39 @@ ClosePrev = closes[len-1]   // 即 in.LivePrice 對應的 bar close
 - 不觸發新單
 - 寫 `Diagnostics["out_of_range"] = 1`
 - 用戶看 dashboard 知道區間需要重新調整
+
+### 2.4 Oversell 防護（多線同時穿越）
+
+當 bar close 跳空向上穿過多條網格線時，每條線都會觸發 SELL。若不防護，累積 SELL 數量可能超過 `FloatAsset` 餘量，導致：
+- 交易所 reject 部分訂單
+- pending reconcile 噪音
+- 帳本與實際 inventory 不一致
+
+**演算法（在 Step 內追蹤 remaining inventory）：**
+
+```
+remainingFloatQty = in.Portfolio.FloatAsset
+remainingUSDT     = in.Portfolio.USDTBalance  // 雖然主要由外圈 SpendableUSDT 管，但同 tick 多單先扣減
+
+for i := 0..GridCount:
+    if 上穿 (SELL):
+        wantQty   = orderUSDT / closeNow
+        sellQty   = min(wantQty, remainingFloatQty)
+        if sellQty < LotMinQty:
+            continue  // 沒貨可賣，跳過
+        out.Intents = append(out.Intents, SELL sellQty)
+        remainingFloatQty -= sellQty
+
+    elif 下穿 (BUY):
+        if orderUSDT > remainingUSDT:
+            continue  // USDT 不足
+        if orderUSDT < MinOrderUSDT:
+            continue  // 過小
+        out.Intents = append(out.Intents, BUY orderUSDT)
+        remainingUSDT -= orderUSDT
+```
+
+**鐵律：grid 不使用 hard_release**（不從 DEAD lot 借貨）。FloatAsset 不夠就少賣，不去動 DEAD。這跟 lunar-spot-v1 設計選擇不同。
 
 ---
 
@@ -125,7 +166,10 @@ func (s *Strategy) Step(in strategy.StrategyInput, p strategy.Params) strategy.S
         return out
     }
 
-    // 4. 偵測穿越
+    // 4. 偵測穿越（含 oversell 防護）
+    remainingFloatQty := in.Portfolio.FloatAsset
+    remainingUSDT := in.Portfolio.USDTBalance
+
     for i := 0; i <= params.GridCount; i++ {
         gridLine := lower + float64(i)*step
 
@@ -139,17 +183,25 @@ func (s *Strategy) Step(in strategy.StrategyInput, p strategy.Params) strategy.S
 
         if closePrev > gridLine && closeNow <= gridLine {
             // 下穿：BUY
+            if orderUSDT > remainingUSDT { continue }
+            if orderUSDT < in.MinOrderUSD { continue }
             out.Intents = append(out.Intents, strategy.TradeIntent{
                 Action: "BUY", Engine: "GRID", LotType: "FLOAT", AmountUSDT: orderUSDT,
             })
+            remainingUSDT -= orderUSDT
             runtime.LastTriggerBarTime[i] = in.LatestBarTimeMs
             runtime.GridFillsCount[i]++
+
         } else if closePrev < gridLine && closeNow >= gridLine {
-            // 上穿：SELL
-            qty := orderUSDT / closeNow
+            // 上穿：SELL（受 remainingFloatQty 上限）
+            wantQty := orderUSDT / closeNow
+            sellQty := wantQty
+            if sellQty > remainingFloatQty { sellQty = remainingFloatQty }
+            if sellQty < in.LotMinQty { continue }
             out.Intents = append(out.Intents, strategy.TradeIntent{
-                Action: "SELL", Engine: "GRID", LotType: "FLOAT", QtyAsset: qty,
+                Action: "SELL", Engine: "GRID", LotType: "FLOAT", QtyAsset: sellQty,
             })
+            remainingFloatQty -= sellQty
             runtime.LastTriggerBarTime[i] = in.LatestBarTimeMs
             runtime.GridFillsCount[i]++
         }
