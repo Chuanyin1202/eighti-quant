@@ -17,12 +17,11 @@ import (
 	"github.com/Chuanyin1202/eighti-quant/internal/strategy"
 	"go.uber.org/zap"
 
-	// Strategy reference implementations register themselves in init().
-	// Phase 4 will populate these packages; the imports stay so the registry
-	// is wired up consistently from day one.
-	// _ "github.com/Chuanyin1202/eighti-quant/internal/strategies/simpledca"
-	// _ "github.com/Chuanyin1202/eighti-quant/internal/strategies/grid"
-	// _ "github.com/Chuanyin1202/eighti-quant/internal/strategies/lunarspotv1"
+	// Strategy reference implementations register themselves via init().
+	// Adding/removing a strategy is a one-line edit here.
+	_ "github.com/Chuanyin1202/eighti-quant/internal/strategies/simpledca"
+	// _ "github.com/Chuanyin1202/eighti-quant/internal/strategies/grid"        // Phase 4b
+	// _ "github.com/Chuanyin1202/eighti-quant/internal/strategies/lunarspotv1" // Phase 4c
 )
 
 func main() {
