@@ -5,14 +5,20 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"github.com/Chuanyin1202/eighti-quant/internal/broker/paper"
+	"github.com/Chuanyin1202/eighti-quant/internal/broker/priceprovider"
 	"github.com/Chuanyin1202/eighti-quant/internal/saas/auth"
 	"github.com/Chuanyin1202/eighti-quant/internal/saas/config"
+	"github.com/Chuanyin1202/eighti-quant/internal/saas/cron"
+	"github.com/Chuanyin1202/eighti-quant/internal/saas/instance"
 	"github.com/Chuanyin1202/eighti-quant/internal/saas/store"
 	"github.com/Chuanyin1202/eighti-quant/internal/strategy"
 	"go.uber.org/zap"
@@ -72,16 +78,29 @@ func main() {
 		)
 	}
 
-	// Phase 3+ TODO:
-	//   - Init WS hub, instance manager, cron scheduler, REST API.
-	//   - Replace this signal-wait with a graceful shutdown sequence
-	//     (drain ticks, persist runtime, close WS, close DB).
-	logger.Info("EightiQuant SaaS bootstrap complete; awaiting Phase 3+")
+	// Phase 6 wiring: PriceProvider + PaperBroker + Manager + Scheduler.
+	prices := priceprovider.NewBinancePublic(10 * time.Second)
+	paperBroker := paper.NewSimple(0.001, 10.1, nil)
+	mgr := instance.NewManager(db, redis, prices, paperBroker, logger)
+	scheduler := cron.New(db, mgr, logger)
+
+	rootCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := scheduler.Start(rootCtx); err != nil {
+		logger.Fatal("scheduler start failed", zap.Error(err))
+	}
+	logger.Info("cron scheduler started", zap.String("interval", "every minute"))
+
+	// Phase 7+ TODO: WS hub for live mode, REST API, graceful shutdown drain.
+	logger.Info("EightiQuant SaaS bootstrap complete; paper-mode tick loop active")
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
-	logger.Info("shutdown signal received; goodbye")
+	logger.Info("shutdown signal received; draining cron")
+	scheduler.AwaitDrain(30 * time.Second)
+	logger.Info("goodbye")
 }
 
 func mustLogger() *zap.Logger {
