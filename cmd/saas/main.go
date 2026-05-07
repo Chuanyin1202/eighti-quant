@@ -1,21 +1,94 @@
+// Command saas is the EightiQuant SaaS-side daemon (decision brain).
+//
+// Phase 2 wires up: Config / DB / Redis / Auth / strategy registry.
+// Phase 3+ adds: cron tick / WS hub / GA engine / REST API.
 package main
 
-// Phase 10 will implement the full SaaS entrypoint.
-// This stub exists so go.mod can pin all required dependencies upfront.
-
 import (
-	_ "github.com/gin-gonic/gin"
-	_ "github.com/golang-jwt/jwt/v5"
-	_ "github.com/gorilla/websocket"
-	_ "github.com/redis/go-redis/v9"
-	_ "github.com/robfig/cron/v3"
-	_ "github.com/spf13/viper"
-	_ "go.uber.org/zap"
-	_ "gorm.io/driver/postgres"
-	_ "gorm.io/gorm"
+	"flag"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/Chuanyin1202/eighti-quant/internal/saas/auth"
+	"github.com/Chuanyin1202/eighti-quant/internal/saas/config"
+	"github.com/Chuanyin1202/eighti-quant/internal/saas/store"
+	"github.com/Chuanyin1202/eighti-quant/internal/strategy"
+	"go.uber.org/zap"
+
+	// Strategy reference implementations register themselves in init().
+	// Phase 4 will populate these packages; the imports stay so the registry
+	// is wired up consistently from day one.
+	// _ "github.com/Chuanyin1202/eighti-quant/internal/strategies/simpledca"
+	// _ "github.com/Chuanyin1202/eighti-quant/internal/strategies/grid"
+	// _ "github.com/Chuanyin1202/eighti-quant/internal/strategies/lunarspotv1"
 )
 
 func main() {
-	// Phase 10: see docs/系統總體拓撲結構.md §6.1 系統初始化
-	panic("not implemented yet — see docs/系統總體拓撲結構.md §6.1")
+	cfgPath := flag.String("config", "config.yaml", "path to config.yaml")
+	flag.Parse()
+
+	logger := mustLogger()
+	defer func() { _ = logger.Sync() }()
+
+	cfg, err := config.Load(*cfgPath)
+	if err != nil {
+		logger.Fatal("config load failed", zap.Error(err))
+	}
+	logger.Info("config loaded",
+		zap.String("app_role", cfg.AppRole),
+		zap.String("server_addr", cfg.Server.Addr),
+		zap.String("db_host", cfg.Database.Host),
+		zap.String("db_name", cfg.Database.Name),
+	)
+
+	db, err := store.NewDB(cfg.Database)
+	if err != nil {
+		logger.Fatal("db init failed", zap.Error(err))
+	}
+	logger.Info("postgres ready (automigrate + preflight + indexes.sql applied)")
+	_ = db
+
+	redis, err := store.NewRedis(cfg.Redis)
+	if err != nil {
+		logger.Fatal("redis init failed", zap.Error(err))
+	}
+	defer func() { _ = redis.Close() }()
+	logger.Info("redis ready", zap.String("addr", cfg.Redis.Addr))
+
+	authSvc := auth.New(cfg.JWT)
+	_ = authSvc
+	logger.Info("auth ready", zap.Int("ttl_hours", cfg.JWT.TTLHours))
+
+	strategies := strategy.All()
+	logger.Info("strategy registry initialized", zap.Int("count", len(strategies)))
+	for id, s := range strategies {
+		m := s.Manifest()
+		logger.Info("registered strategy",
+			zap.String("id", id),
+			zap.String("name", m.Name),
+			zap.String("version", m.Version),
+			zap.Bool("supports_evolution", m.SupportsEvolution),
+		)
+	}
+
+	// Phase 3+ TODO:
+	//   - Init WS hub, instance manager, cron scheduler, REST API.
+	//   - Replace this signal-wait with a graceful shutdown sequence
+	//     (drain ticks, persist runtime, close WS, close DB).
+	logger.Info("EightiQuant SaaS bootstrap complete; awaiting Phase 3+")
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	<-sigCh
+	logger.Info("shutdown signal received; goodbye")
+}
+
+func mustLogger() *zap.Logger {
+	l, err := zap.NewProduction()
+	if err != nil {
+		log.Fatalf("zap init: %v", err)
+	}
+	return l
 }

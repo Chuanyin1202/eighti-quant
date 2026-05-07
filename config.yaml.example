@@ -1,0 +1,32 @@
+# EightiQuant SaaS configuration template.
+#
+# Copy to config.yaml (gitignored) and fill in env-var-driven secrets via
+# environment variables instead of inline values.
+#
+# Env var convention: EIGHTIQUANT_<SECTION>_<KEY>
+#   EIGHTIQUANT_DATABASE_PASSWORD
+#   EIGHTIQUANT_REDIS_PASSWORD
+#   EIGHTIQUANT_JWT_SECRET
+
+app_role: dev   # saas / lab / dev
+
+server:
+  addr: ":8080"
+
+database:
+  host: localhost
+  port: 5432
+  user: eighti
+  password: ""    # set via EIGHTIQUANT_DATABASE_PASSWORD
+  name: eighti_quant
+  sslmode: disable
+
+redis:
+  addr: localhost:6379
+  password: ""    # set via EIGHTIQUANT_REDIS_PASSWORD
+  db: 0
+
+jwt:
+  secret: ""      # set via EIGHTIQUANT_JWT_SECRET
+  ttl_hours: 24
+  issuer: eighti-quant

@@ -48,3 +48,6 @@ docker-compose.override.yml
 
 # ── Claude Code 工作目錄 ────────────────────────────────
 .claude/
+
+# Local SaaS config (contains secrets via env)
+config.yaml
