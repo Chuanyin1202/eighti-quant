@@ -43,23 +43,36 @@ Binance API Key / Secret **只能**存在於：
 
 發現任何 code 將 API Key 寫入 SaaS 側時，**必須立即停止並報告**。
 
-### 2.4 GORM Code-First 唯一 Schema 真源
-資料庫**結構**（表、欄位、型別）以 Go struct 為唯一真源，透過 `db.AutoMigrate(...)` 同步。
+### 2.4 GORM Code-First 唯一 Schema 真源（含 raw SQL 規則）
 
-**禁止**：
-- 寫 SQL migration 檔案（`.sql`、`migrations/` 目錄）改變表結構
-- 維護版本化 migration 腳本
-- 手動 `ALTER TABLE`
+**單一規則：表結構（tables、columns、types）真源在 Go struct，由 `db.AutoMigrate(...)` 同步；其他 DB 物件（partial index、check constraint、advisory lock 設定）由受控 raw SQL 管理。**
 
-要改 schema → 改 Go struct → 重啟 SaaS（AutoMigrate 自動同步）。
+#### 2.4.1 由 struct + AutoMigrate 管理（**禁止** raw SQL）
+- 表的 CREATE / 欄位的 ADD / 型別變更
+- 全表 unique index（GORM tag `uniqueIndex` 可表達者）
+- 一般 index（GORM tag `index` 可表達者）
 
-**例外（明確豁免）：**
-PostgreSQL **partial index**（如 `CREATE UNIQUE INDEX ... WHERE role='champion'`）GORM struct tag 無法表達，且這類 index 屬於「查詢優化 + 資料庫層級唯一性約束」而非表結構。允許：
-- 放在 `internal/saas/store/indexes.sql`
-- 由 `db.go` 在 AutoMigrate 後 `db.Exec(ddl)` 執行
-- 文件須在 `docs/進化計算引擎.md` 或對應 spec 說明該 index 的目的
+要改以上任一項 → 改 Go struct → 重啟 SaaS（AutoMigrate 自動同步）。**禁止**寫 migration `.sql` 改表結構、**禁止** 手動 `ALTER TABLE`、**禁止** 維護版本化 migration 腳本。
 
-此豁免的精神：**表結構（columns）真源仍在 struct，純粹的 index/約束 可以額外管**。
+#### 2.4.2 由 raw SQL 管理（**強制**用 `internal/saas/store/indexes.sql`）
+
+GORM struct tag 表達不了的 DB 物件，**必須**寫進 `internal/saas/store/indexes.sql`，由 `db.go` 在 `AutoMigrate` 完成後 `db.Exec(ddl)` 執行。當前已知用例：
+
+- **PostgreSQL partial index**（含 `WHERE` 子句）
+  - 例：`CREATE UNIQUE INDEX uniq_active_champion ON gene_records (strategy_id, symbol) WHERE role = 'champion';`
+  - 用途：強制單一 champion 不變式，是 promote 競態的最後防線（見 `docs/進化計算引擎.md` §6.2.1.1）
+- **Check constraint**（GORM 不支援 expression 級檢查）
+- **資料庫層級的 trigger / function**（當前 Phase 0-13 不使用）
+
+`indexes.sql` 必須：
+- 每條 DDL 寫 `IF NOT EXISTS`，可重複執行不報錯
+- 在文件（`docs/`）對應段落說明該 DB 物件的目的
+- 變更時走 PR review，不允許直接動 production DB
+
+#### 2.4.3 為什麼這樣切
+- 表結構在 struct → code review 友善、跨環境一致
+- DB 層級不變式約束（partial unique 等）必須在 DB 強制，**不能**只靠應用層協議
+- 兩者分職守，互不混淆
 
 ### 2.5 無量綱計算
 所有價格相關計算**必須**使用對數收益率或比率（無量綱），**禁止**用絕對價格做跨標的比較。
@@ -84,7 +97,7 @@ PostgreSQL **partial index**（如 `CREATE UNIQUE INDEX ... WHERE role='champion
 → 先讀 `docs/進化計算引擎.md`，特別是 `EvolvableStrategy` 8 動詞接口。新增策略只需實作接口，**不得**修改 `engine.go`。
 
 ### 3.3 涉及 Go 後端 schema / DB
-→ 嚴格遵守 GORM Code-First：改 struct → AutoMigrate。**不寫** SQL 檔案。
+→ 遵守 §2.4 規則：表結構改 struct → AutoMigrate 自動同步；partial index / check constraint 等 GORM 不支援的物件**必須**進 `internal/saas/store/indexes.sql`（由 `db.go` 在 AutoMigrate 後 Exec）。**禁止**寫 migration `.sql` 或手動 ALTER TABLE 改表結構。
 
 ### 3.4 涉及價格 / 訊號計算
 → 優先用對數收益率、ratio、百分比。函數簽章避免出現 `priceUSDT`、`btcPrice` 等絕對價格參數（除非僅用於下單轉換）。
