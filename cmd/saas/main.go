@@ -19,8 +19,8 @@ import (
 
 	// Strategy reference implementations register themselves via init().
 	// Adding/removing a strategy is a one-line edit here.
+	_ "github.com/Chuanyin1202/eighti-quant/internal/strategies/grid"
 	_ "github.com/Chuanyin1202/eighti-quant/internal/strategies/simpledca"
-	// _ "github.com/Chuanyin1202/eighti-quant/internal/strategies/grid"        // Phase 4b
 	// _ "github.com/Chuanyin1202/eighti-quant/internal/strategies/lunarspotv1" // Phase 4c
 )
 
