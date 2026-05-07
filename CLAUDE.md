@@ -128,22 +128,40 @@ go build ./...
 
 # 完整測試（含資料競態檢查）
 go test ./... -race -timeout 300s
+```
 
-# 鐵律驗證（grep 必須無結果）
-grep -rn "isBacktest" internal/strategies/
-grep -rn "api_key\|secret_key\|passphrase" internal/saas/
-grep -rn "quant\.Bar" internal/strategies/
-grep -rn "http\.\|database/sql\|os\.Open\|time\.Now" internal/strategies/
+### 6.1 鐵律驗證（用 ripgrep，必須全部無結果）
+
+優先使用 `rg`（ripgrep），它預設遵守 .gitignore、語法清晰、且支援標準 PCRE：
+
+```bash
+# 鐵律 1: 策略同構（無 isBacktest 分支）
+rg -n 'isBacktest' internal/strategies/
+
+# 鐵律 2: API Key 物理隔離（SaaS 側無交易所憑證）
+rg -nE '(api_?key|secret_?key|passphrase)' internal/saas/ internal/quant/
+
+# 鐵律 3: OHLC 剝離（策略內核不依賴 Bar 結構）
+rg -n 'quant\.Bar' internal/strategies/
+
+# 鐵律 4: 策略純函數（禁網路 / DB / 檔案 / 計時器 / 隨機）
+rg -nE '(net/http|google\.golang\.org/grpc|gorilla/websocket|nhooyr\.io/websocket|database/sql|gorm\.io/|io/ioutil|os\.(Open|OpenFile|Create|ReadFile|WriteFile)|time\.(Now|NewTimer|NewTicker|Tick|Since|Sleep|After|AfterFunc)|math/rand)' internal/strategies/ internal/quant/
+
+# 鐵律 5: 內核標的中立（禁止 if symbol == "BTCUSDT" 之類）
+rg -nE '"BTCUSDT"|"ETHUSDT"' internal/strategies/ internal/quant/
 ```
 
 任何 grep 出現非空結果 → 違反鐵律 → 必須修正後才算完成。
+
+> 註：歷史上文件曾錯用 `grep -rn` + BRE alternation（`\|`），實際抓不到任何 alternation 模式，鐵律驗證形同虛設。改用 `rg -nE` 解決此問題。
+> 註：CI 應將以上命令包成 script，PR 觸發自動跑，rg 退出碼非 0 直接 fail。
 
 ---
 
 ## 7. UI 文案紀律（前端）
 
 面向用戶的字串中**避免**出現：
-- 內部狀態機術語（`DEAD_STACK`、`S3_Panic`）
+- 內部狀態機術語（`"DEAD"` / `"FLOAT"`、`S3_Panic`，UI 應翻為「長期持倉/活躍倉位」）
 - 無上下文的裸數學量名（`TheoreticalUSD`、`VolatilityRatio`）
 - 希臘字母單獨出現（`β`、`γ`），若必須保留須加文字釋義（如「σ（標準差）」）
 
@@ -151,15 +169,19 @@ grep -rn "http\.\|database/sql\|os\.Open\|time\.Now" internal/strategies/
 
 ---
 
-## 8. 不做的事（明確排除）
+## 8. 不做的事（範圍排除）
 
-以下功能在當前 Phase 範圍**不實作**，提及時直接拒絕：
+以下功能在 **Phase 0-13 主線範圍不實作**，被提及時直接告知「不在當前範圍」：
 
-- WFO（Walk-Forward Optimization）滾動回測
-- 自動定時觸發 GA（必須人工觸發）
-- 全幣種訊號掃描（Phase 14+）
-- 槓桿合約（僅做現貨）
+### 8.1 永不做（產品定位排除）
+- 槓桿合約交易（本系統定位為現貨）
+- 跨交易所套利（單一交易所 Binance）
 - 多用戶 Agent 共用（每用戶最多一個 Agent 連線）
-- 跨交易所套利
+
+### 8.2 Phase 14+ 重新評估（暫不做）
+- WFO（Walk-Forward Optimization）滾動回測
+- 自動定時觸發 GA（當前必須人工觸發）
+- 全幣種訊號掃描（當前主線僅 BTCUSDT + ETHUSDT 雙標的）
+- AI 多維信號層（LLM 輔助）
 
 需求變更時，先更新本檔案再動手。
