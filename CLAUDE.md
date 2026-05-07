@@ -151,31 +151,56 @@ go build ./...
 go test ./... -race -timeout 300s
 ```
 
-### 6.1 鐵律驗證（用 ripgrep，必須全部無結果）
+### 6.1 鐵律驗證（用 ripgrep，必須全部無匹配）
 
-優先使用 `rg`（ripgrep），它預設遵守 .gitignore、語法清晰、且支援標準 PCRE：
+優先使用 `rg`（ripgrep）。**注意：`rg` 不帶 `-E`**，因為 `rg -E` 是 `--encoding`（指定檔案編碼），不是 grep 的「擴展正規」。`rg` 預設就支援 alternation `|` 與其他標準 regex 構件。
 
 ```bash
 # 鐵律 1: 策略同構（無 isBacktest 分支）
 rg -n 'isBacktest' internal/strategies/
 
 # 鐵律 2: API Key 物理隔離（SaaS 側無交易所憑證）
-rg -nE '(api_?key|secret_?key|passphrase)' internal/saas/ internal/quant/
+rg -n '(api_?key|secret_?key|passphrase)' internal/saas/ internal/quant/
 
 # 鐵律 3: OHLC 剝離（策略內核不依賴 Bar 結構）
 rg -n 'quant\.Bar' internal/strategies/
 
 # 鐵律 4: 策略純函數（禁網路 / DB / 檔案 / 計時器 / 隨機）
-rg -nE '(net/http|google\.golang\.org/grpc|gorilla/websocket|nhooyr\.io/websocket|database/sql|gorm\.io/|io/ioutil|os\.(Open|OpenFile|Create|ReadFile|WriteFile)|time\.(Now|NewTimer|NewTicker|Tick|Since|Sleep|After|AfterFunc)|math/rand)' internal/strategies/ internal/quant/
+rg -n '(net/http|google\.golang\.org/grpc|gorilla/websocket|nhooyr\.io/websocket|database/sql|gorm\.io/|io/ioutil|os\.(Open|OpenFile|Create|ReadFile|WriteFile)|time\.(Now|NewTimer|NewTicker|Tick|Since|Sleep|After|AfterFunc)|math/rand)' internal/strategies/ internal/quant/
 
 # 鐵律 5: 內核標的中立（禁止 if symbol == "BTCUSDT" 之類）
-rg -nE '"BTCUSDT"|"ETHUSDT"' internal/strategies/ internal/quant/
+rg -n '"BTCUSDT"|"ETHUSDT"' internal/strategies/ internal/quant/
 ```
 
-任何 grep 出現非空結果 → 違反鐵律 → 必須修正後才算完成。
+**退出碼期望**：鐵律驗證**期望「無匹配」**（`rg` exit 1）才算通過。`rg` 的退出碼語義：
+- `0` = 有匹配 → **違反鐵律，CI 必須 fail**
+- `1` = 無匹配 → 通過
+- `2` = 命令錯誤 → CI 必須 fail（避免「壞命令當通過」）
 
-> 註：歷史上文件曾錯用 `grep -rn` + BRE alternation（`\|`），實際抓不到任何 alternation 模式，鐵律驗證形同虛設。改用 `rg -nE` 解決此問題。
-> 註：CI 應將以上命令包成 script，PR 觸發自動跑，rg 退出碼非 0 直接 fail。
+CI script 範本（每條鐵律包一個 wrapper，反轉 exit 0）：
+
+```bash
+#!/bin/bash
+set -e
+
+check() {
+  local rule="$1"; shift
+  if rg "$@" > /tmp/rg.out; then
+    echo "❌ 違反鐵律: $rule"
+    cat /tmp/rg.out
+    exit 1
+  elif [ $? -eq 2 ]; then
+    echo "❌ rg 命令錯誤（鐵律 $rule）"
+    exit 2
+  fi
+}
+
+check "1-isBacktest" -n 'isBacktest' internal/strategies/
+check "2-apikey" -n '(api_?key|secret_?key|passphrase)' internal/saas/ internal/quant/
+# ... 以此類推
+```
+
+> 註：歷史踩坑紀錄：原本寫 `grep -rn '...\|...'` 用 BRE alternation 實際抓不到，後改 `rg -nE` 又踩到「-E 在 rg 是 encoding flag 不是 extended regex」，這次最終定案不帶 -E，並用上述 wrapper script 反轉退出碼語義。
 
 ---
 
