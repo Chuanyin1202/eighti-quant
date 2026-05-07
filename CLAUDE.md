@@ -44,14 +44,22 @@ Binance API Key / Secret **只能**存在於：
 發現任何 code 將 API Key 寫入 SaaS 側時，**必須立即停止並報告**。
 
 ### 2.4 GORM Code-First 唯一 Schema 真源
-資料庫結構以 Go struct 為唯一真源，透過 `db.AutoMigrate(...)` 同步。
+資料庫**結構**（表、欄位、型別）以 Go struct 為唯一真源，透過 `db.AutoMigrate(...)` 同步。
 
 **禁止**：
-- 寫 SQL migration 檔案（`.sql`、`migrations/` 目錄）
+- 寫 SQL migration 檔案（`.sql`、`migrations/` 目錄）改變表結構
 - 維護版本化 migration 腳本
 - 手動 `ALTER TABLE`
 
 要改 schema → 改 Go struct → 重啟 SaaS（AutoMigrate 自動同步）。
+
+**例外（明確豁免）：**
+PostgreSQL **partial index**（如 `CREATE UNIQUE INDEX ... WHERE role='champion'`）GORM struct tag 無法表達，且這類 index 屬於「查詢優化 + 資料庫層級唯一性約束」而非表結構。允許：
+- 放在 `internal/saas/store/indexes.sql`
+- 由 `db.go` 在 AutoMigrate 後 `db.Exec(ddl)` 執行
+- 文件須在 `docs/進化計算引擎.md` 或對應 spec 說明該 index 的目的
+
+此豁免的精神：**表結構（columns）真源仍在 struct，純粹的 index/約束 可以額外管**。
 
 ### 2.5 無量綱計算
 所有價格相關計算**必須**使用對數收益率或比率（無量綱），**禁止**用絕對價格做跨標的比較。
