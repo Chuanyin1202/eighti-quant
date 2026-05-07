@@ -1,4 +1,4 @@
-module github.com/alexabc/quantsaas
+module github.com/Chuanyin1202/quantsaas
 
 go 1.26.1
 
