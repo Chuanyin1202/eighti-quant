@@ -1,4 +1,4 @@
-module github.com/Chuanyin1202/quantsaas
+module github.com/Chuanyin1202/eighti-quant
 
 go 1.26.1
 

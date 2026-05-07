@@ -1,4 +1,4 @@
-# QuantSaaS — 專案憲法
+# EightiQuant — 專案憲法
 
 > 本檔案是所有 AI 對話與 code review 的最高優先依據。任何違反此處規則的提議，無論技術上多合理，都必須**先停下並提出說明**，不得直接執行。
 
@@ -82,7 +82,7 @@ GORM struct tag 表達不了的 DB 物件，**必須**寫進 `internal/saas/stor
 - ✅ `if log(btc_close[t] / btc_close[t-1]) > threshold`
 
 ### 2.6 單一 Postgres + Redis 僅快取
-- 整個系統使用**單一** Postgres 實例（資料庫名 `quantsaas`），不分 Shell DB / Live DB
+- 整個系統使用**單一** Postgres 實例（資料庫名 `eighti_quant`），不分 Shell DB / Live DB
 - Redis **僅**作快取（冠軍基因、Session、AI 訊號 TTL），**不**承擔信號傳遞或事件佇列職責
 - 不引入 RabbitMQ / Kafka / NATS 等訊息佇列
 
@@ -130,7 +130,7 @@ GORM struct tag 表達不了的 DB 物件，**必須**寫進 `internal/saas/stor
 | 主線交易對 | **BTCUSDT** + **ETHUSDT** 雙標的 | 每個 Instance 綁定一個標的，各自獨立 GA / champion |
 | 策略代號 | `lunar-spot-v1` | 第一條主線策略，現貨多空中性 |
 | 時鐘聚合週期 | `4h` K 線 | cron 每分鐘掃描，但 Instance tick 只在最新 4h bar 完成且未處理時推進 |
-| Postgres | 15 | 單一實例 `quantsaas` |
+| Postgres | 15 | 單一實例 `eighti_quant` |
 | Redis | 7 | 僅快取 |
 | Go 版本 | 1.26+ | |
 
