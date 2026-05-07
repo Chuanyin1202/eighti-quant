@@ -1,0 +1,50 @@
+# ── 鐵律：API Key 物理隔離 ──────────────────────────────────
+# Agent 本地配置（含交易所 API Key/Secret）絕對不能進入 Git
+config.agent.yaml
+config.agent.*.yaml
+
+# ── 各種環境變數檔 ────────────────────────────────────────
+*.env
+.env
+.env.*
+!.env.example
+
+# ── 編譯產物 ──────────────────────────────────────────────
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# ── Go ──────────────────────────────────────────────────
+*.test
+*.out
+coverage.out
+vendor/
+
+# ── 前端 ─────────────────────────────────────────────────
+web-frontend/node_modules/
+web-frontend/dist/
+web-frontend/.vite/
+web-frontend/.env.local
+
+# ── IDE / 系統 ──────────────────────────────────────────
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*~
+
+# ── 本地資料 / 日誌 ──────────────────────────────────────
+*.log
+logs/
+tmp/
+data/
+postgres-data/
+redis-data/
+
+# ── Docker 本地覆寫 ─────────────────────────────────────
+docker-compose.override.yml
+
+# ── Claude Code 工作目錄 ────────────────────────────────
+.claude/
